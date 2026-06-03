@@ -1,3 +1,6 @@
+import os
+import subprocess
+import tempfile
 import librosa
 import numpy as np
 
@@ -167,6 +170,67 @@ def local_peak_score(values, index, radius=8):
     return values[index] >= local_max
 
 
+
+def load_audio_for_analysis(video_path, target_sr=22050):
+    """
+    Railway/server-safe audio loader.
+
+    Problem:
+    librosa.load(video_path) can fail on Railway with:
+    audioread.exceptions.NoBackendError
+
+    Fix:
+    1. Extract audio from video with ffmpeg into a temporary WAV.
+    2. Load that WAV with librosa.
+    """
+    temp_audio_path = None
+
+    try:
+        temp_file = tempfile.NamedTemporaryFile(
+            suffix=".wav",
+            delete=False
+        )
+        temp_audio_path = temp_file.name
+        temp_file.close()
+
+        command = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            video_path,
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(target_sr),
+            "-ac",
+            "1",
+            temp_audio_path
+        ]
+
+        subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True
+        )
+
+        audio, sr = librosa.load(
+            temp_audio_path,
+            sr=target_sr,
+            mono=True
+        )
+
+        return audio, sr
+
+    finally:
+        if temp_audio_path and os.path.exists(temp_audio_path):
+            try:
+                os.remove(temp_audio_path)
+            except Exception:
+                pass
+
+
 def find_loud_moments(
     video_path,
     max_clips=DEFAULT_MAX_CLIPS,
@@ -185,7 +249,7 @@ def find_loud_moments(
     clip_before = min(6, max(3, clip_length // 5))
     clip_after = max(5, clip_length - clip_before)
 
-    audio, sr = librosa.load(video_path)
+    audio, sr = load_audio_for_analysis(video_path)
 
     video_duration = len(audio) / sr
 
